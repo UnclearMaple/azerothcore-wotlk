@@ -1,0 +1,88 @@
+version: 1.0.{build}
+
+image: Visual Studio 2022
+
+platform:
+  - x64
+
+configuration:
+  - Release
+
+clone_depth: 1
+
+install:
+  - ps: |
+      choco install openssl -y
+      choco install cmake -y
+
+      $boostDirs = Get-ChildItem "C:\Libraries" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "boost_*" } |
+        Sort-Object Name -Descending
+
+      if ($boostDirs) {
+        $env:BOOST_ROOT = $boostDirs[0].FullName
+        Write-Host "Using BOOST_ROOT=$env:BOOST_ROOT"
+      } else {
+        Write-Host "No Boost install found under C:\Libraries"
+      }
+
+before_build:
+  - ps: |
+      New-Item -ItemType Directory -Force -Path build | Out-Null
+
+      cmake -S . -B build `
+        -G "Visual Studio 17 2022" `
+        -A x64 `
+        -DTOOLS_BUILD=maps-only `
+        -DAPPS_BUILD=none `
+        -DSCRIPTS=none `
+        -DMODULES=none
+
+build_script:
+  - ps: |
+      cmake --build build --config Release --parallel
+
+after_build:
+  - ps: |
+      $out = Join-Path $env:APPVEYOR_BUILD_FOLDER "AzerothCore-Map-Tools-Windows-x64"
+      New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+      $wanted = @(
+        "mapextractor.exe",
+        "map_extractor.exe",
+        "vmap4extractor.exe",
+        "vmap4_extractor.exe",
+        "vmap4assembler.exe",
+        "vmap4_assembler.exe",
+        "mmaps_generator.exe",
+        "mmaps-config.yaml"
+      )
+
+      foreach ($name in $wanted) {
+        $file = Get-ChildItem `
+          -Path "$env:APPVEYOR_BUILD_FOLDER\build" `
+          -Recurse `
+          -File `
+          -Filter $name `
+          -ErrorAction SilentlyContinue |
+          Select-Object -First 1
+
+        if ($file) {
+          Copy-Item $file.FullName $out -Force
+          Write-Host "Copied $($file.Name)"
+        }
+      }
+
+      Write-Host "Packaged files:"
+      Get-ChildItem $out
+
+      7z a `
+        "$env:APPVEYOR_BUILD_FOLDER\AzerothCore-Map-Tools-Windows-x64.zip" `
+        "$out\*"
+
+artifacts:
+  - path: AzerothCore-Map-Tools-Windows-x64.zip
+    name: AzerothCore-Map-Tools-Windows-x64
+
+test: off
+deploy: off
