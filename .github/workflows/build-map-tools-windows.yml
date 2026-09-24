@@ -1,0 +1,97 @@
+name: Build AzerothCore Map Tools - Windows x64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout AzerothCore
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install openssl -y
+          choco install boost-msvc-14.3 -y
+
+      - name: Configure map-tools-only build
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+
+          cmake -S . -B build `
+            -G "Visual Studio 17 2022" `
+            -A x64 `
+            -DTOOLS_BUILD=maps-only `
+            -DAPPS_BUILD=none `
+            -DSCRIPTS=none `
+            -DMODULES=none
+
+      - name: Build map tools
+        shell: powershell
+        run: |
+          cmake --build build --config Release --parallel
+
+      - name: Find built tools
+        shell: powershell
+        run: |
+          Write-Host "Searching for AzerothCore map tools..."
+
+          Get-ChildItem -Path build -Recurse -File |
+            Where-Object {
+              $_.Name -in @(
+                "mapextractor.exe",
+                "map_extractor.exe",
+                "vmap4extractor.exe",
+                "vmap4_extractor.exe",
+                "vmap4assembler.exe",
+                "vmap4_assembler.exe",
+                "mmaps_generator.exe",
+                "mmaps-config.yaml"
+              )
+            } |
+            Select-Object FullName
+
+      - name: Package tools
+        shell: powershell
+        run: |
+          $out = Join-Path $PWD "AzerothCore-Map-Tools-Windows-x64"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $wanted = @(
+            "mapextractor.exe",
+            "map_extractor.exe",
+            "vmap4extractor.exe",
+            "vmap4_extractor.exe",
+            "vmap4assembler.exe",
+            "vmap4_assembler.exe",
+            "mmaps_generator.exe",
+            "mmaps-config.yaml"
+          )
+
+          foreach ($name in $wanted) {
+            $file = Get-ChildItem -Path build -Recurse -File -Filter $name |
+              Select-Object -First 1
+
+            if ($file) {
+              Copy-Item $file.FullName $out -Force
+              Write-Host "Copied $($file.Name)"
+            }
+          }
+
+          Write-Host ""
+          Write-Host "Final package:"
+          Get-ChildItem $out
+
+      - name: Upload extractor package
+        uses: actions/upload-artifact@v4
+        with:
+          name: AzerothCore-Map-Tools-Windows-x64
+          path: AzerothCore-Map-Tools-Windows-x64/
+          if-no-files-found: error
